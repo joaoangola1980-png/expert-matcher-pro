@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import re
+import PyPDF2
+from docx import Document
 
 st.title("🧠 Expert Matcher Pro")
 
