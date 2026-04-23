@@ -9,10 +9,10 @@ st.set_page_config(page_title="Expert Matcher Pro", layout="wide")
 st.title("🧠 Expert Matcher Pro")
 
 # =========================
-# 📂 FILE UPLOADS
+# 📂 UPLOAD FILES
 # =========================
 
-data_file = st.file_uploader("Upload Experts Database", type=["csv", "xlsx"])
+data_file = st.file_uploader("Upload Experts Database (Excel or CSV)", type=["csv", "xlsx"])
 tor_file = st.file_uploader("Upload ToR (PDF, Word, TXT)", type=["pdf", "docx", "txt"])
 
 # =========================
@@ -20,18 +20,27 @@ tor_file = st.file_uploader("Upload ToR (PDF, Word, TXT)", type=["pdf", "docx", 
 # =========================
 
 def read_pdf(file):
-    reader = PyPDF2.PdfReader(file)
-    text = ""
-    for page in reader.pages:
-        text += page.extract_text() or ""
-    return text
+    try:
+        reader = PyPDF2.PdfReader(file)
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text() or ""
+        return text
+    except:
+        return ""
 
 def read_docx(file):
-    doc = Document(file)
-    return "\n".join([p.text for p in doc.paragraphs])
+    try:
+        doc = Document(file)
+        return "\n".join([p.text for p in doc.paragraphs])
+    except:
+        return ""
 
 def read_txt(file):
-    return file.read().decode("utf-8")
+    try:
+        return file.read().decode("utf-8")
+    except:
+        return ""
 
 # =========================
 # 🧠 EXTRACT TOR TEXT
@@ -42,14 +51,19 @@ tor_text = ""
 if tor_file is not None:
     if tor_file.type == "application/pdf":
         tor_text = read_pdf(tor_file)
+
     elif tor_file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
         tor_text = read_docx(tor_file)
+
     elif tor_file.type == "text/plain":
         tor_text = read_txt(tor_file)
 
-    st.success("ToR loaded successfully ✅")
+    if tor_text:
+        st.success("ToR loaded successfully ✅")
+    else:
+        st.warning("Could not extract text from ToR")
 
-# DEBUG (mostrar parte do ToR)
+# Preview ToR
 if tor_text:
     st.subheader("📄 ToR Preview")
     st.write(tor_text[:1000])
@@ -62,14 +76,17 @@ def parse_experience(val):
     if pd.isna(val):
         return 0
     val = str(val)
+
     if "20+" in val:
         return 20
     if "16" in val:
         return 16
     if "11" in val:
         return 11
+
     nums = re.findall(r"\d+", val)
     return int(nums[0]) if nums else 0
+
 
 def score_candidate(row, tor_text):
     text = (
@@ -104,23 +121,44 @@ def score_candidate(row, tor_text):
 
 if data_file is not None and tor_text:
 
-    # Load data
-    if data_file.name.endswith(".csv"):
-        df = pd.read_csv(data_file)
-    else:
-        df = pd.read_excel(data_file)
+    # LOAD DATA (ROBUST VERSION)
+    try:
+        if data_file.name.endswith(".csv"):
+            df = pd.read_csv(
+                data_file,
+                encoding="utf-8",
+                engine="python",
+                on_bad_lines="skip"
+            )
+
+        elif data_file.name.endswith(".xlsx"):
+            df = pd.read_excel(data_file, sheet_name=0)
+
+        else:
+            st.error("Unsupported file format")
+            st.stop()
+
+    except Exception as e:
+        st.error(f"Error loading file: {e}")
+        st.stop()
 
     st.success(f"Loaded {len(df)} experts")
 
-    # Clean
-    df = df.drop_duplicates(subset="Email Address")
+    # =========================
+    # 🧹 CLEAN DATA
+    # =========================
 
-    st.info(f"After deduplication: {len(df)} experts")
+    if "Email Address" in df.columns:
+        df = df.drop_duplicates(subset="Email Address")
 
-    # Score
+    st.info(f"After cleaning: {len(df)} experts")
+
+    # =========================
+    # 📊 SCORING
+    # =========================
+
     df["score"] = df.apply(lambda x: score_candidate(x, tor_text), axis=1)
 
-    # Sort
     df_sorted = df.sort_values("score", ascending=False)
 
     # =========================
@@ -133,11 +171,11 @@ if data_file is not None and tor_text:
 
     for _, row in top5.iterrows():
         st.markdown(f"""
-        ### {row['First Name']} {row['Last Name']}
-        📧 {row['Email Address']}  
+        ### {row.get('First Name','')} {row.get('Last Name','')}
+        📧 {row.get('Email Address','N/A')}  
         ⭐ Score: {row['score']}  
 
-        **Expertise:** {row['Primary Area of Expertise']}
+        **Expertise:** {row.get('Primary Area of Expertise','')}
 
         ---
         """)
@@ -148,10 +186,17 @@ if data_file is not None and tor_text:
 
     st.subheader("📊 Full Ranking")
 
-    st.dataframe(df_sorted[[
-        "First Name",
-        "Last Name",
-        "Email Address",
-        "Primary Area of Expertise",
-        "score"
-    ]])
+    display_cols = [
+        col for col in [
+            "First Name",
+            "Last Name",
+            "Email Address",
+            "Primary Area of Expertise",
+            "score"
+        ] if col in df.columns
+    ]
+
+    st.dataframe(df_sorted[display_cols])
+
+else:
+    st.info("⬆️ Please upload both the Experts Database and the ToR file")
