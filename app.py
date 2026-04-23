@@ -39,24 +39,37 @@ def score_candidate(row, tor_text):
 
 if uploaded_file and tor_text:
 
-    if uploaded_file.name.endswith(".csv"):
-        df = pd.read_csv(uploaded_file)
-    else:
-        df = pd.read_excel(uploaded_file)
+   tor_file = st.file_uploader(
+    "Upload ToR (PDF, Word, TXT)", 
+    type=["pdf", "docx", "txt"]
+)
 
-    df = df.drop_duplicates(subset="Email Address")
+tor_text = ""
 
-    df["score"] = df.apply(lambda x: score_candidate(x, tor_text), axis=1)
+if tor_file is not None:
 
-    top = df.sort_values("score", ascending=False).head(5)
+    if tor_file.type == "application/pdf":
+        tor_text = read_pdf(tor_file)
 
-    st.subheader("🏆 Top Experts")
+    elif tor_file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+        tor_text = read_docx(tor_file)
 
-    for _, row in top.iterrows():
-        st.write(f"""
-        **{row['First Name']} {row['Last Name']}**  
-        Email: {row['Email Address']}  
-        Score: {row['score']}  
-        """)
+    elif tor_file.type == "text/plain":
+        tor_text = tor_file.read().decode("utf-8")
 
-    st.dataframe(df)
+    st.success("ToR loaded successfully ✅")
+def read_pdf(file):
+    reader = PyPDF2.PdfReader(file)
+    text = ""
+    for page in reader.pages:
+        text += page.extract_text() or ""
+    return text
+
+
+def read_docx(file):
+    doc = Document(file)
+    return "\n".join([p.text for p in doc.paragraphs])
+
+if tor_text:
+    st.write("### 📄 Extracted ToR Preview")
+    st.write(tor_text[:1000])  # primeiros 1000 caracteres
