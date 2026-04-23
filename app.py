@@ -4,43 +4,31 @@ import re
 import PyPDF2
 from docx import Document
 
-st.set_page_config(page_title="Expert Matcher Pro", layout="wide")
+st.set_page_config(page_title="Expert Matcher PRO", layout="wide")
 
-st.title("🧠 Expert Matcher Pro")
+st.title("🧠 Expert Matcher PRO")
 
 # =========================
-# 📂 UPLOAD FILES
+# 📂 UPLOAD
 # =========================
 
 data_file = st.file_uploader("Upload Experts Database (Excel or CSV)", type=["csv", "xlsx"])
 tor_file = st.file_uploader("Upload ToR (PDF, Word, TXT)", type=["pdf", "docx", "txt"])
 
 # =========================
-# 📄 READ FILE FUNCTIONS
+# 📄 READ FILES
 # =========================
 
 def read_pdf(file):
-    try:
-        reader = PyPDF2.PdfReader(file)
-        text = ""
-        for page in reader.pages:
-            text += page.extract_text() or ""
-        return text
-    except:
-        return ""
+    reader = PyPDF2.PdfReader(file)
+    return " ".join([p.extract_text() or "" for p in reader.pages])
 
 def read_docx(file):
-    try:
-        doc = Document(file)
-        return "\n".join([p.text for p in doc.paragraphs])
-    except:
-        return ""
+    doc = Document(file)
+    return "\n".join([p.text for p in doc.paragraphs])
 
 def read_txt(file):
-    try:
-        return file.read().decode("utf-8")
-    except:
-        return ""
+    return file.read().decode("utf-8")
 
 # =========================
 # 🧠 EXTRACT TOR TEXT
@@ -48,53 +36,62 @@ def read_txt(file):
 
 tor_text = ""
 
-if tor_file is not None:
+if tor_file:
     if tor_file.type == "application/pdf":
         tor_text = read_pdf(tor_file)
-
-    elif tor_file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+    elif "word" in tor_file.type:
         tor_text = read_docx(tor_file)
-
-    elif tor_file.type == "text/plain":
+    else:
         tor_text = read_txt(tor_file)
 
-    if tor_text:
-        st.success("ToR loaded successfully ✅")
-    else:
-        st.warning("Could not extract text from ToR")
-
-# Preview ToR
-if tor_text:
-    st.subheader("📄 ToR Preview")
-    st.write(tor_text[:1000])
+    st.success("ToR loaded ✅")
 
 # =========================
-# 🧩 HELPER FUNCTIONS
+# 🧠 TOR ANALYSIS
+# =========================
+
+def extract_tor_info(text):
+    text_lower = text.lower()
+
+    # resumo simples
+    summary = text[:500]
+
+    # dias
+    days = re.findall(r"\d+\s*days", text_lower)
+    days = days[0] if days else "N/A"
+
+    # deliverables
+    deliverables = re.findall(r"deliverables?.{0,100}", text_lower)
+
+    # perfis
+    roles = re.findall(r"expert|specialist|consultant", text_lower)
+    roles = list(set(roles))
+
+    return summary, days, deliverables[:5], roles[:5]
+
+# =========================
+# 🧩 HELPERS
 # =========================
 
 def parse_experience(val):
-    if pd.isna(val):
-        return 0
     val = str(val)
-
     if "20+" in val:
         return 20
-    if "16" in val:
-        return 16
-    if "11" in val:
-        return 11
-
     nums = re.findall(r"\d+", val)
     return int(nums[0]) if nums else 0
 
-
 def get_name(row):
-    first = row.get('First Name') or row.get('First name') or ""
-    last = row.get('Last Name') or row.get('Last name') or ""
-    return f"{first} {last}".strip()
+    return f"{row.get('First Name','')} {row.get('Last Name','')}"
 
+def get_profile(row):
+    return str(row.get("Brief Professional Profile", ""))[:200]
+
+# =========================
+# 🧮 SCORE (0-5)
+# =========================
 
 def score_candidate(row, tor_text):
+
     text = (
         str(row.get("Primary Area of Expertise", "")) + " " +
         str(row.get("Brief Professional Profile", ""))
@@ -104,114 +101,94 @@ def score_candidate(row, tor_text):
 
     score = 0
 
-    # 🔥 KEYWORD GROUPS (INTELIGENTE)
-    keyword_groups = [
-        ["data", "database", "data systems"],
-        ["system", "information system", "mis"],
-        ["digital", "it", "technology"],
-        ["governance", "public administration"],
-        ["social", "social protection"],
-        ["analysis", "analytics", "evaluation"]
+    keywords = [
+        "data", "system", "mis", "digital",
+        "governance", "social", "analysis"
     ]
 
-    for group in keyword_groups:
-        if any(kw in tor_text for kw in group) and any(kw in text for kw in group):
-            score += 15
+    matches = sum(1 for k in keywords if k in text and k in tor_text)
 
-    # EXPERIÊNCIA
+    score += matches
+
     exp = parse_experience(row.get("Total years of relevant professional experience", ""))
-    score += exp
+    score += exp / 10
 
-    # EXPERIÊNCIA INTERNACIONAL
-    if str(row.get("Have you worked on international development projects?", "")).lower() == "yes":
-        score += 15
+    if "yes" in str(row.get("Have you worked on international development projects?", "")).lower():
+        score += 1
 
-    return score
+    # normalizar 0-5
+    return min(round(score,1), 5)
 
 # =========================
-# 🚀 MAIN LOGIC
+# 🚀 MAIN
 # =========================
 
-if data_file is not None and tor_text:
+if data_file and tor_text:
 
-    # =========================
-    # LOAD DATA (CSV + XLSX)
-    # =========================
-    try:
-        if data_file.name.endswith(".csv"):
-            df = pd.read_csv(
-                data_file,
-                encoding="utf-8",
-                engine="python",
-                on_bad_lines="skip"
-            )
+    # LOAD DATA
+    if data_file.name.endswith(".csv"):
+        df = pd.read_csv(data_file, engine="python", on_bad_lines="skip")
+    else:
+        df = pd.read_excel(data_file)
 
-        elif data_file.name.endswith(".xlsx"):
-            df = pd.read_excel(data_file, sheet_name=0)
+    # CLEAN
+    df = df.drop_duplicates(subset="Email Address")
 
-        else:
-            st.error("Unsupported file format")
-            st.stop()
-
-    except Exception as e:
-        st.error(f"Error loading file: {e}")
-        st.stop()
-
-    st.success(f"Loaded {len(df)} experts")
-
-    # =========================
-    # CLEAN DATA
-    # =========================
-
-    if "Email Address" in df.columns:
-        df = df.drop_duplicates(subset="Email Address")
-
-    st.info(f"After cleaning: {len(df)} experts")
-
-    # =========================
-    # SCORING
-    # =========================
-
+    # SCORE
     df["score"] = df.apply(lambda x: score_candidate(x, tor_text), axis=1)
 
-    df_sorted = df.sort_values("score", ascending=False)
+    df = df.sort_values("score", ascending=False)
 
     # =========================
-    # TOP EXPERTS
+    # 📄 TOR SUMMARY
     # =========================
 
-    st.subheader("🏆 Top Experts")
+    st.header("📄 ToR Summary")
 
-    top5 = df_sorted.head(5)
+    summary, days, deliverables, roles = extract_tor_info(tor_text)
 
-    for _, row in top5.iterrows():
-        st.markdown(f"""
-        ### {get_name(row)}
-        📧 {row.get('Email Address','N/A')}  
-        ⭐ Score: {row['score']}  
+    col1, col2 = st.columns(2)
 
-        **Expertise:** {row.get('Primary Area of Expertise','')}
+    with col1:
+        st.write("### Project Overview")
+        st.write(summary)
 
-        ---
-        """)
+        st.write("### Duration")
+        st.write(days)
+
+    with col2:
+        st.write("### Deliverables")
+        for d in deliverables:
+            st.write(f"- {d}")
+
+        st.write("### Profiles Required")
+        for r in roles:
+            st.write(f"- {r}")
 
     # =========================
-    # FULL TABLE
+    # 👥 EXPERTS (MOSAIC)
     # =========================
 
-    st.subheader("📊 Full Ranking")
+    st.header("👥 Recommended Experts")
 
-    display_cols = [
-        col for col in [
-            "First Name",
-            "Last Name",
-            "Email Address",
-            "Primary Area of Expertise",
-            "score"
-        ] if col in df.columns
-    ]
+    top = df.head(6)
 
-    st.dataframe(df_sorted[display_cols])
+    cols = st.columns(3)
+
+    for i, (_, row) in enumerate(top.iterrows()):
+        with cols[i % 3]:
+            st.markdown(f"""
+            ### {get_name(row)}
+            📧 {row.get('Email Address','N/A')}
+
+            ⭐ **Match Score:** {row['score']} / 5
+
+            **Expertise:**  
+            {row.get('Primary Area of Expertise','')}
+
+            **Profile:**  
+            {get_profile(row)}
+            """)
 
 else:
-    st.info("⬆️ Please upload both the Experts Database and the ToR file")
+    st.info("Upload both database and ToR")
