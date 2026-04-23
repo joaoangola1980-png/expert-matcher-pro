@@ -88,6 +88,12 @@ def parse_experience(val):
     return int(nums[0]) if nums else 0
 
 
+def get_name(row):
+    first = row.get('First Name') or row.get('First name') or ""
+    last = row.get('Last Name') or row.get('Last name') or ""
+    return f"{first} {last}".strip()
+
+
 def score_candidate(row, tor_text):
     text = (
         str(row.get("Primary Area of Expertise", "")) + " " +
@@ -98,20 +104,27 @@ def score_candidate(row, tor_text):
 
     score = 0
 
-    keywords = [
-        "data", "system", "mis", "digital",
-        "governance", "social", "analysis"
+    # 🔥 KEYWORD GROUPS (INTELIGENTE)
+    keyword_groups = [
+        ["data", "database", "data systems"],
+        ["system", "information system", "mis"],
+        ["digital", "it", "technology"],
+        ["governance", "public administration"],
+        ["social", "social protection"],
+        ["analysis", "analytics", "evaluation"]
     ]
 
-    for kw in keywords:
-        if kw in text and kw in tor_text:
-            score += 10
+    for group in keyword_groups:
+        if any(kw in tor_text for kw in group) and any(kw in text for kw in group):
+            score += 15
 
+    # EXPERIÊNCIA
     exp = parse_experience(row.get("Total years of relevant professional experience", ""))
     score += exp
 
+    # EXPERIÊNCIA INTERNACIONAL
     if str(row.get("Have you worked on international development projects?", "")).lower() == "yes":
-        score += 10
+        score += 15
 
     return score
 
@@ -121,7 +134,9 @@ def score_candidate(row, tor_text):
 
 if data_file is not None and tor_text:
 
-    # LOAD DATA (ROBUST VERSION)
+    # =========================
+    # LOAD DATA (CSV + XLSX)
+    # =========================
     try:
         if data_file.name.endswith(".csv"):
             df = pd.read_csv(
@@ -145,7 +160,7 @@ if data_file is not None and tor_text:
     st.success(f"Loaded {len(df)} experts")
 
     # =========================
-    # 🧹 CLEAN DATA
+    # CLEAN DATA
     # =========================
 
     if "Email Address" in df.columns:
@@ -154,7 +169,7 @@ if data_file is not None and tor_text:
     st.info(f"After cleaning: {len(df)} experts")
 
     # =========================
-    # 📊 SCORING
+    # SCORING
     # =========================
 
     df["score"] = df.apply(lambda x: score_candidate(x, tor_text), axis=1)
@@ -162,7 +177,7 @@ if data_file is not None and tor_text:
     df_sorted = df.sort_values("score", ascending=False)
 
     # =========================
-    # 🏆 TOP EXPERTS
+    # TOP EXPERTS
     # =========================
 
     st.subheader("🏆 Top Experts")
@@ -171,7 +186,7 @@ if data_file is not None and tor_text:
 
     for _, row in top5.iterrows():
         st.markdown(f"""
-        ### {row.get('First Name','')} {row.get('Last Name','')}
+        ### {get_name(row)}
         📧 {row.get('Email Address','N/A')}  
         ⭐ Score: {row['score']}  
 
@@ -181,7 +196,7 @@ if data_file is not None and tor_text:
         """)
 
     # =========================
-    # 📊 FULL TABLE
+    # FULL TABLE
     # =========================
 
     st.subheader("📊 Full Ranking")
